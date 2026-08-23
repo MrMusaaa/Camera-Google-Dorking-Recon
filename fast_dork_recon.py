@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import signal
 import urllib.parse
 from datetime import datetime
 from urllib.parse import urlparse, quote, unquote
@@ -30,19 +31,71 @@ CONFIG = {
     "timeout": 10,
     "max_retries": 3,
     "output_file": "canli_siteler.txt",
+    "backup_file": "canli_siteler_backup.txt",
     "log_file": "recon_log.txt",
-    "user_agents": [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
-    ],
-    "request_delay": 1.0,
-    "use_proxy": False,
-    "proxy_list": [],
-    "max_results_per_dork": 50,
-    "debug": False
+    "debug": False,
+    "max_results_per_dork": 30,
+    "request_delay": 0.5
 }
+
+# ============================================================
+# GLOBAL DEĞİŞKENLER - CTRL+C için
+# ============================================================
+running = True
+bot_instance = None
+found_urls_buffer = []
+found_camera_urls = []
+alive_urls_list = []
+
+# ============================================================
+# SİNYAL YAKALAMA - CTRL+C
+# ============================================================
+def signal_handler(sig, frame):
+    global running, bot_instance, found_urls_buffer, alive_urls_list
+    print(Fore.YELLOW + "\n\n⚠ CTRL+C tespit edildi! Veriler kaydediliyor...")
+    running = False
+    
+    try:
+        # Tüm bulunan URL'leri kaydet
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"canli_siteler_{timestamp}.txt"
+        
+        with open(backup_file, 'w', encoding='utf-8') as f:
+            f.write(f"# Fast Dork Recon Backup - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("# ===========================================\n\n")
+            
+            # Canlı URL'ler
+            f.write("# CANLI URL'LER\n")
+            for url_data in alive_urls_list:
+                f.write(f"{url_data['url']} | Status: {url_data['status']} | Type: {url_data['content_type']} | Time: {url_data['timestamp']}\n")
+            
+            f.write("\n# TESPİT EDİLEN KAMERA URL'LERİ\n")
+            for url in found_camera_urls:
+                f.write(f"{url}\n")
+        
+        # Ana dosyaya da kaydet
+        with open(CONFIG["output_file"], 'a', encoding='utf-8') as f:
+            f.write(f"\n# --- CTRL+C ile sonlandırıldı: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            for url_data in alive_urls_list:
+                f.write(f"{url_data['url']} | Status: {url_data['status']} | Type: {url_data['content_type']} | Time: {url_data['timestamp']}\n")
+        
+        print(Fore.GREEN + f"\n✅ Veriler kaydedildi: {backup_file}")
+        print(Fore.GREEN + f"✅ Ana dosyaya eklendi: {CONFIG['output_file']}")
+        print(Fore.GREEN + f"📊 Toplam canlı URL: {len(alive_urls_list)}")
+        print(Fore.GREEN + f"📊 Toplam tespit edilen URL: {len(found_camera_urls)}")
+        
+        if bot_instance and hasattr(bot_instance, 'health_checker'):
+            stats = bot_instance.health_checker.get_statistics()
+            print(Fore.WHITE + f"📊 İstatistikler - Canlı: {stats['alive']} | Kapalı: {stats['dead']} | Toplam: {stats['total']}")
+        
+        sys.exit(0)
+        
+    except Exception as e:
+        print(Fore.RED + f"❌ Kaydetme hatası: {e}")
+        sys.exit(1)
+
+# Sinyal handler'ı kaydet
+signal.signal(signal.SIGINT, signal_handler)
 
 # ============================================================
 # DORK LİSTESİ - Google Dorks
@@ -52,86 +105,48 @@ GOOGLE_DORKS = [
     'inurl:camctrl.cgi',
     'inurl:"view/index.shtml"',
     'intitle:"IP CAMERA Viewer" intext:"setting | Client setting"',
-    'intitle:"Device(" AND intext:"Network Camera" AND "language:" "AND "Password"',
     'intitle:"webcam 7" inurl:"/gallery.html"',
     'intitle:"yawcam" inurl:":8081"',
     'intitle:"iGuard Fingerprint Security System"',
-    '(intitle:MOBOTIX intitle:PDAS) | (intitle:MOBOTIX intitle:Seiten) | (inurl:/pda/index.html +camera)',
     'intitle:"Edr1680 remote viewer"',
-    'intitle:"NetCam Live Image" -.edu -.gov -johnny.ihackstuff.com',
-    'intitle:"INTELLINET" intitle:"IP Camera Homepage"',
+    'intitle:"NetCam Live Image" -.edu -.gov',
     'intitle:"WEBDVR" -inurl:product -inurl:demo',
-    'intitle:"Middle frame of Videoconference Management System" ext:htm',
-    'tilt intitle:"Live View / - AXIS" | inurl:view/view.shtml',
     'intitle:"AXIS 240 Camera Server" intext:"server push" -help',
-    'intitle:"--- VIDEO WEB SERVER ---" intext:"Video Web Server" "Any time & Any where" username password',
-    'intitle:HomeSeer.Web.Control | Home.Status.Events.Log',
-    'intitle:"supervisioncam protocol"',
     'intitle:"active webcam page"',
     'inurl:"MultiCameraFrame?Mode=Motion"',
-    'VB Viewer inurl:/viewer/live/ja/live.html',
-    'inurl:control/camerainfo',
     'intitle:"webcamXP 5" -download',
     'inurl:"/view/view.shtml?id="',
     'inurl:/view/viewer_index.shtml',
     'intext:"powered by webcamXP 5"',
-    'intitle:"webcam 7" inurl:"8080" -intext:"8080"',
-    'intitle:"Live View /- AXIS" |inurl:view/view.shtml OR inurl:view/indexFrame.shtml |intitle:"MJPG Live Demo" |intext:"Select preset position"',
+    'intitle:"Live View /- AXIS" |inurl:view/view.shtml',
     'allintitle:Axis 2.10 OR 2.12 OR 2.30 OR 2.31 OR 2.32 OR 2.33 OR 2.34 OR 2.40 OR 2.42 OR 2.43 "Network Camera"',
-    'allintitle:Edr1680 remote viewer',
-    'allintitle:EverFocus |EDSR |EDSR400 Applet',
-    'allintitle:EDR1600 login |Welcome',
     'intitle:"BlueNet Video Viewer"',
     'intitle:"SNC-RZ30" -demo',
     'inurl:cgi-bin/guestimage.html',
-    '(intitle:(EyeSpyFX|OptiCamFX) "go to camera")|(inurl:servlet/DetectBrowser)',
     'intitle:"Veo Observer XT"',
-    'inurl:shtml|pl|php|htm|asp|aspx|pDf|cfm -(intext:observer)',
-    'inurl:top.htm inurl:currenttime',
     'intitle:"webcamXP 5"',
     'inurl:"lvappl.htm"',
     'inurl:/view.shtml',
     'intitle:"Live View/ — AXIS"',
     'inurl:iview/view.shtml',
     'inurl:ViewerFrame?M0de=',
-    'inurl:ViewerFrame?M0de=Refresh',
     'inurl:axis-cgi/jpg',
     'inurl:axis-cgi/mjpg',
     'inurl:view/indexFrame.shtml',
-    'inurl:view/index.shtml',
-    'inurl:view/view.shtml',
     'liveapplet',
     'intitle:"live view" intitle:axis',
-    'intitle:liveapplet',
-    'allintitle:"Network Camera NetworkCamera"',
-    'intitle:axis intitle:"video server"',
     'intitle:liveapplet inurl:LvAppl',
-    'intitle:"EvoCam" inurl:"webcam.html"',
-    'intitle:"Live NetSnap Cam-Server feed"',
-    'intitle:"Live View/ — AX|S"',
     'intitle:"Live View/ — AXIS 206M"',
-    'intitle:"Live View/ — AXIS 210"',
     'inurl:indexFrame.shtml Axis',
-    'inurl:"MultiCameraFrame?Mode=Motion"',
     'intitle:start inurl:cgistart',
     'intitle:"WJ-NTI 04 Main Page"',
     'intitle:snc-220 inurl:home/',
-    'intitle:snc-cs3 inurl:home/',
-    'intitle:snc-r230 inurl:home/',
-    'intitle:"sony network camera snc-pl"',
-    'intitle:"sony network camera snc-ml"',
-    'site:.viewnetcam.com -www.viewnetcam.com',
     'intitle:"Toshiba Network Camera" user login',
     'intitle:"netcam live image"',
     'intitle:"i-Catcher Console - Web Monitor"',
     'intitle:"IP Webcam" inurl:"/greet.html"',
-    'AXIS Camera exploit',
-    'intitle:"NetCamSC*"',
-    'intitle:"NetCamXL*"',
-    'inurl:"view.shtml" "camera"',
     'intitle:"NetCamSC*" | intitle:"NetCamXL*" inurl:index.html',
     'inurl:"live/cam.html"',
-    'inurl:"view.shtml" "Network Camera"',
     'inurl:/config/cam_portal.cgi "Panasonic"',
     '"Camera Live Image" inurl:"guestimage.html"',
     'intitle:"webcam" inurl:login',
@@ -141,24 +156,24 @@ GOOGLE_DORKS = [
     'inurl:/live.htm intext:"M-JPEG"|"System Log"|"Camera-1"|"View Control"',
     'intitle:"webcamXP 5" inurl:8080 "Live"',
     'inurl:"MultiCameraFrame?Mode=Motion"',
+    'intitle:"Weather Wing WS-2"',
+    'intitle:"Live View /- AXIS" OR inurl:view/view.shtml OR inurl:view/indexFrame.shtml',
+    'intitle:"Network Camera" inurl:"/main.cgi"',
+    'inurl:index.html "Network Camera" intitle:"Live View"',
+    'inurl:main.cgi inurl:user inurl:password',
+    'intitle:"IP Camera" inurl:viewer',
+    'inurl:snapshot.cgi inurl:username',
+    'intitle:"webcam 7" inurl:8080 -intitle:"webcam 7"',
     'intitle:"IP CAMERA Viewer" intext:"setting | Client setting"',
-    'intitle:"Weather Wing WS-2"'
+    'intitle:"Device(" AND intext:"Network Camera" AND "language:" "AND "Password"',
+    'inurl:"CgiStart?page=" inurl:cam'
 ]
 
 # ============================================================
-# SHODAN BENZERİ DORKLAR (HTTP Header/Fingerprint tabanlı)
+# SHODAN BENZERİ DORKLAR
 # ============================================================
 SHODAN_STYLE_DORKS = [
     'product:"Hikvision IP Camera"',
-    'http.title:"WEB VIEW"',
-    'http.component:"mootools" -401',
-    'Server: SQ-WEBCAM',
-    'Server: yawcam',
-    'Server: uc-httpd',
-    'title:camera',
-    'title:"Webcam"',
-    'has_screenshot:true',
-    '"Hipcam RealServer/V1.0"',
     'product:"D-Link IP Camera"',
     'product:"Axis Network Camera"',
     'product:"Foscam IP Camera"',
@@ -178,31 +193,23 @@ SHODAN_STYLE_DORKS = [
     'product:"Geovision Camera"',
     'product:"EverFocus Camera"',
     'product:"Dedicated Micros Camera"',
-    'product:"Loxone Intercom"',
-    'product:"Comelit Camera"',
     'product:"Canon VB Camera"',
-    'product:"WVC210 Wireless-G PTZ"',
-    'product:"SNC-RZ30"',
-    'product:"iGuard Fingerprint"',
-    'product:"Veo Observer"',
-    'product:"BlueNet Video"',
     'product:"NetCamXL"',
     'product:"NetCamSC"',
-    'product:"AirLink Camera"',
-    'product:"Inspire DVR"',
-    'product:"Milestone Portal"',
     'product:"MotionEYE"',
-    'product:"Defeway Camera"',
-    'product:"ExecqVision"',
-    'product:"Digital Watching NVR"',
-    'product:"NL NUUO"',
-    'product:"Security Spy"',
     'product:"Webcam 7"',
-    'product:"webcamXP"'
+    'product:"webcamXP"',
+    'Server: SQ-WEBCAM',
+    'Server: yawcam',
+    'Server: uc-httpd',
+    'title:camera',
+    'title:"Webcam"',
+    'has_screenshot:true',
+    '"Hipcam RealServer/V1.0"'
 ]
 
 # ============================================================
-# DORK ENGINE - Google ve DuckDuckGo üzerinden arama
+# DORK ENGINE
 # ============================================================
 class DorkEngine:
     def __init__(self):
@@ -211,17 +218,14 @@ class DorkEngine:
         self.results = set()
         self.processed_urls = set()
         self.lock = asyncio.Lock()
+        self.found_camera_urls = set()
         
-    async def search_duckduckgo(self, dork, max_results=50):
+    async def search_duckduckgo(self, dork, max_results=30):
         """DuckDuckGo Lite üzerinden dork araması"""
         urls = []
         try:
-            # DuckDuckGo Lite API
             search_url = "https://lite.duckduckgo.com/lite/"
-            params = {
-                'q': dork,
-                'kd': '-1'  # Tüm bölgeler
-            }
+            params = {'q': dork, 'kd': '-1'}
             
             headers = {
                 'User-Agent': self.ua.random,
@@ -230,11 +234,10 @@ class DorkEngine:
                 'Connection': 'keep-alive'
             }
             
-            async with self.session.get(search_url, params=params, headers=headers, 
+            async with self.session.get(search_url, params=params, headers=headers,
                                        timeout=aiohttp.ClientTimeout(total=CONFIG["timeout"])) as response:
                 if response.status == 200:
                     html = await response.text()
-                    # Linkleri ayıkla
                     pattern = r'<a[^>]+href="([^"]+)"[^>]*>'
                     links = re.findall(pattern, html)
                     
@@ -242,7 +245,12 @@ class DorkEngine:
                         if link.startswith('/'):
                             link = 'https://duckduckgo.com' + link
                         if self.is_valid_url(link):
-                            urls.append(link)
+                            clean_url = self.clean_url(link)
+                            if clean_url and clean_url not in self.processed_urls:
+                                self.processed_urls.add(clean_url)
+                                urls.append(clean_url)
+                                # Terminalde göster
+                                print(Fore.CYAN + f"🔍 Bulundu: {clean_url}")
                         if len(urls) >= max_results:
                             break
                             
@@ -252,16 +260,12 @@ class DorkEngine:
         
         return urls[:max_results]
     
-    async def search_bing(self, dork, max_results=50):
-        """Bing üzerinden dork araması (alternatif)"""
+    async def search_bing(self, dork, max_results=30):
+        """Bing üzerinden dork araması"""
         urls = []
         try:
             search_url = "https://www.bing.com/search"
-            params = {
-                'q': dork,
-                'count': max_results,
-                'first': 1
-            }
+            params = {'q': dork, 'count': max_results, 'first': 1}
             
             headers = {
                 'User-Agent': self.ua.random,
@@ -273,13 +277,16 @@ class DorkEngine:
                                        timeout=aiohttp.ClientTimeout(total=CONFIG["timeout"])) as response:
                 if response.status == 200:
                     html = await response.text()
-                    # Bing link pattern
                     pattern = r'<a[^>]+href="([^"]+)"[^>]*>.*?<h2'
                     links = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
                     
                     for link in links:
                         if self.is_valid_url(link):
-                            urls.append(link)
+                            clean_url = self.clean_url(link)
+                            if clean_url and clean_url not in self.processed_urls:
+                                self.processed_urls.add(clean_url)
+                                urls.append(clean_url)
+                                print(Fore.CYAN + f"🔍 Bulundu (Bing): {clean_url}")
                         if len(urls) >= max_results:
                             break
                             
@@ -289,15 +296,12 @@ class DorkEngine:
         
         return urls[:max_results]
     
-    async def search_startpage(self, dork, max_results=50):
-        """Startpage üzerinden dork araması (özel)"""
+    async def search_startpage(self, dork, max_results=30):
+        """Startpage üzerinden dork araması"""
         urls = []
         try:
             search_url = "https://www.startpage.com/sp/search"
-            params = {
-                'query': dork,
-                'num': max_results
-            }
+            params = {'query': dork, 'num': max_results}
             
             headers = {
                 'User-Agent': self.ua.random,
@@ -315,7 +319,11 @@ class DorkEngine:
                         if 'startpage.com' in link:
                             continue
                         if self.is_valid_url(link):
-                            urls.append(link)
+                            clean_url = self.clean_url(link)
+                            if clean_url and clean_url not in self.processed_urls:
+                                self.processed_urls.add(clean_url)
+                                urls.append(clean_url)
+                                print(Fore.CYAN + f"🔍 Bulundu (Startpage): {clean_url}")
                         if len(urls) >= max_results:
                             break
                             
@@ -333,7 +341,6 @@ class DorkEngine:
                 return False
             if not parsed.netloc:
                 return False
-            # Yerel IP'leri ve özel aralıkları filtrele
             ip_pattern = r'^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|::1)'
             if re.match(ip_pattern, parsed.netloc):
                 return False
@@ -345,7 +352,6 @@ class DorkEngine:
         """URL'yi temizle ve normalize et"""
         try:
             parsed = urlparse(url)
-            # Sorgu parametrelerini temizle
             clean_path = parsed.path.rstrip('/')
             if not clean_path:
                 clean_path = '/'
@@ -357,25 +363,21 @@ class DorkEngine:
         """Belirtilen dork'u çalıştır"""
         results = []
         
-        if engine == 'duckduckgo':
-            results = await self.search_duckduckgo(dork, CONFIG["max_results_per_dork"])
-        elif engine == 'bing':
-            results = await self.search_bing(dork, CONFIG["max_results_per_dork"])
-        elif engine == 'startpage':
-            results = await self.search_startpage(dork, CONFIG["max_results_per_dork"])
+        try:
+            if engine == 'duckduckgo':
+                results = await self.search_duckduckgo(dork, CONFIG["max_results_per_dork"])
+            elif engine == 'bing':
+                results = await self.search_bing(dork, CONFIG["max_results_per_dork"])
+            elif engine == 'startpage':
+                results = await self.search_startpage(dork, CONFIG["max_results_per_dork"])
+        except Exception as e:
+            if CONFIG["debug"]:
+                print(Fore.RED + f"Engine {engine} hatası: {e}")
         
-        # URL'leri temizle ve normalize et
-        cleaned = []
-        for url in results:
-            clean = self.clean_url(url)
-            if clean and clean not in self.processed_urls:
-                self.processed_urls.add(clean)
-                cleaned.append(clean)
-        
-        return cleaned
+        return results
 
 # ============================================================
-# URL FİLTRELEME VE İŞLEME
+# URL FİLTRELEME
 # ============================================================
 class URLFilter:
     @staticmethod
@@ -385,28 +387,11 @@ class URLFilter:
             r'camera', r'cam', r'webcam', r'ipcam', r'stream', r'live',
             r'mjpg', r'mjpeg', r'video', r'snapshot', r'view', r'axis',
             r'hikvision', r'dahua', r'foscam', r'vivotek', r'panasonic',
-            r'sony', r'toshiba', r'netcam', r'acti', r'mobotix', r'dlink'
+            r'sony', r'toshiba', r'netcam', r'acti', r'mobotix', r'dlink',
+            r'viewer', r'guestimage', r'snapshot', r'liveapplet'
         ]
         url_lower = url.lower()
         return any(re.search(pattern, url_lower) for pattern in camera_patterns)
-    
-    @staticmethod
-    def extract_ips(text):
-        """Metinden IP adreslerini çıkar"""
-        ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-        ips = re.findall(ip_pattern, text)
-        valid_ips = []
-        for ip in ips:
-            parts = ip.split('.')
-            if all(0 <= int(p) <= 255 for p in parts):
-                valid_ips.append(ip)
-        return valid_ips
-    
-    @staticmethod
-    def extract_domains(text):
-        """Metinden alan adlarını çıkar"""
-        domain_pattern = r'(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}'
-        return re.findall(domain_pattern, text)
 
 # ============================================================
 # ASENKRON CANLILIK KONTROLÜ
@@ -419,9 +404,10 @@ class AsyncHealthChecker:
         self.alive_urls = []
         self.dead_urls = []
         self.lock = asyncio.Lock()
+        self.total_checked = 0
         
     async def check_url(self, url):
-        """Tek bir URL'nin canlılığını kontrol et"""
+        """Tek bir URL'nin canlılığını kontrol et - TAM URL GÖSTERİMİ"""
         async with self.semaphore:
             for attempt in range(CONFIG["max_retries"]):
                 try:
@@ -434,6 +420,9 @@ class AsyncHealthChecker:
                     }
                     
                     timeout = aiohttp.ClientTimeout(total=CONFIG["timeout"])
+                    
+                    # TAM URL gösterimi
+                    print(Fore.WHITE + f"🔄 Kontrol ediliyor: {url}")
                     
                     async with self.session.get(url, headers=headers, timeout=timeout,
                                               allow_redirects=True, ssl=False) as response:
@@ -459,31 +448,45 @@ class AsyncHealthChecker:
                             is_camera = True
                         
                         if status == 200 and is_camera:
+                            url_data = {
+                                'url': url,
+                                'status': status,
+                                'content_type': content_type,
+                                'timestamp': datetime.now().isoformat(),
+                                'headers': dict(response.headers)
+                            }
                             async with self.lock:
-                                self.alive_urls.append({
-                                    'url': url,
-                                    'status': status,
-                                    'content_type': content_type,
-                                    'timestamp': datetime.now().isoformat(),
-                                    'headers': dict(response.headers)
-                                })
+                                self.alive_urls.append(url_data)
+                                self.total_checked += 1
+                                global alive_urls_list
+                                alive_urls_list.append(url_data)
+                            
+                            # YEŞİL - Canlı URL
+                            print(Fore.GREEN + f"✅ CANLI: {url} | Status: {status} | Type: {content_type}")
                             return True
                         else:
+                            # KIRMIZI - Kapalı veya kamera değil
+                            if status != 200:
+                                print(Fore.RED + f"❌ KAPALI: {url} | Status: {status}")
+                            else:
+                                print(Fore.YELLOW + f"⚠ KAMERA DEĞİL: {url} | Type: {content_type}")
                             return False
                             
                 except asyncio.TimeoutError:
+                    print(Fore.RED + f"⏱ ZAMAN AŞIMI: {url} (Deneme {attempt+1}/{CONFIG['max_retries']})")
                     if attempt == CONFIG["max_retries"] - 1:
                         async with self.lock:
                             self.dead_urls.append(url)
+                            self.total_checked += 1
                         return False
                     await asyncio.sleep(1 * (attempt + 1))
                     
                 except Exception as e:
-                    if CONFIG["debug"]:
-                        print(Fore.RED + f"Hata {url}: {e}")
+                    print(Fore.RED + f"❌ HATA: {url} -> {str(e)} (Deneme {attempt+1}/{CONFIG['max_retries']})")
                     if attempt == CONFIG["max_retries"] - 1:
                         async with self.lock:
                             self.dead_urls.append(url)
+                            self.total_checked += 1
                         return False
                     await asyncio.sleep(1 * (attempt + 1))
             
@@ -500,7 +503,7 @@ class AsyncHealthChecker:
         return {
             'alive': len(self.alive_urls),
             'dead': len(self.dead_urls),
-            'total': len(self.alive_urls) + len(self.dead_urls)
+            'total': self.total_checked
         }
 
 # ============================================================
@@ -508,6 +511,8 @@ class AsyncHealthChecker:
 # ============================================================
 class FastDorkRecon:
     def __init__(self):
+        global bot_instance
+        bot_instance = self
         self.dork_engine = DorkEngine()
         self.health_checker = AsyncHealthChecker()
         self.all_urls = set()
@@ -540,35 +545,45 @@ class FastDorkRecon:
             await self.health_checker.session.close()
     
     async def run_dork_phase(self):
-        """Dork arama fazı"""
-        print(Fore.CYAN + "\n" + "="*60)
+        """Dork arama fazı - TAM URL GÖSTERİMİ"""
+        print(Fore.CYAN + "\n" + "="*70)
         print(Fore.CYAN + "  📡 DORK ARAMA FAZI BAŞLIYOR")
-        print(Fore.CYAN + "="*60)
+        print(Fore.CYAN + "="*70)
+        print(Fore.WHITE + "🔍 Bulunan her URL terminalde gösterilecek...\n")
         
         all_dorks = GOOGLE_DORKS + SHODAN_STYLE_DORKS
         total_dorks = len(all_dorks)
         
-        with tqdm(total=total_dorks, desc="Dork Tarama", unit="dork") as pbar:
+        with tqdm(total=total_dorks, desc="Dork Tarama", unit="dork", ncols=100) as pbar:
             for i, dork in enumerate(all_dorks):
+                if not running:
+                    print(Fore.YELLOW + "⚠ İşlem durduruldu!")
+                    break
+                    
                 try:
-                    # Farklı motorları dene
                     engines = ['duckduckgo', 'bing', 'startpage']
+                    found_any = False
+                    
                     for engine in engines:
                         results = await self.dork_engine.run_dork(dork, engine)
                         if results:
-                            self.all_urls.update(results)
-                            print(Fore.GREEN + f"✓ {dork[:50]}... -> {len(results)} URL bulundu ({engine})")
+                            for url in results:
+                                self.all_urls.add(url)
+                                if URLFilter.is_camera_url(url):
+                                    self.camera_urls.add(url)
+                                    global found_camera_urls
+                                    if url not in found_camera_urls:
+                                        found_camera_urls.append(url)
+                            
+                            print(Fore.GREEN + f"✓ {dork[:40]}... -> {len(results)} URL ({engine})")
+                            found_any = True
                             break
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.3)
                     
-                    # Kamera URL'lerini filtrele
-                    for url in results:
-                        if URLFilter.is_camera_url(url):
-                            self.camera_urls.add(url)
+                    if not found_any:
+                        print(Fore.YELLOW + f"⚠ {dork[:40]}... -> Sonuç yok")
                     
                     pbar.update(1)
-                    
-                    # Rate limiting
                     await asyncio.sleep(CONFIG["request_delay"])
                     
                 except Exception as e:
@@ -580,63 +595,68 @@ class FastDorkRecon:
         print(Fore.GREEN + f"✓ {len(self.camera_urls)} potansiyel kamera URL'si tespit edildi")
     
     async def run_health_check_phase(self):
-        """Canlılık kontrol fazı"""
-        print(Fore.CYAN + "\n" + "="*60)
+        """Canlılık kontrol fazı - TAM URL GÖSTERİMİ"""
+        print(Fore.CYAN + "\n" + "="*70)
         print(Fore.CYAN + "  🔍 CANLILIK KONTROL FAZI BAŞLIYOR")
-        print(Fore.CYAN + "="*60)
+        print(Fore.CYAN + "="*70)
+        print(Fore.WHITE + "📡 Her URL kontrol ediliyor, durumlar renkli olarak gösteriliyor...\n")
         
         if not self.camera_urls:
             print(Fore.YELLOW + "⚠ Hiç URL bulunamadı!")
             return
         
-        url_list = list(self.camera_urls)[:1000]  # Limit
-        print(Fore.WHITE + f"📊 {len(url_list)} URL kontrol ediliyor...")
+        url_list = list(self.camera_urls)[:1500]  # Limit
+        print(Fore.WHITE + f"📊 {len(url_list)} URL kontrol ediliyor...\n")
         
-        batch_size = 50
+        batch_size = 30
         for i in range(0, len(url_list), batch_size):
+            if not running:
+                print(Fore.YELLOW + "⚠ İşlem durduruldu, kaydediliyor...")
+                break
+                
             batch = url_list[i:i+batch_size]
             await self.health_checker.check_multiple(batch)
             
-            # Anlık geri bildirim
-            alive = self.health_checker.alive_urls
-            dead = self.health_checker.dead_urls
+            # İstatistikleri göster
+            stats = self.health_checker.get_statistics()
+            print(Fore.CYAN + f"\n📊 İlerleme: Canlı: {stats['alive']} | Kapalı: {stats['dead']} | Toplam: {stats['total']}")
+            print(Fore.CYAN + "-"*70 + "\n")
             
-            print(Fore.GREEN + f"✓ Canlı: {len(alive)} | " + Fore.RED + f"✗ Kapalı: {len(dead)}")
-            
-            # canli_siteler.txt'ye yaz
+            # Ana dosyaya anlık yaz
             with open(CONFIG["output_file"], 'a', encoding='utf-8') as f:
-                for url_data in alive[-batch_size:]:
-                    f.write(f"{url_data['url']} | Status: {url_data['status']} | Type: {url_data['content_type']} | Time: {url_data['timestamp']}\n")
+                for url_data in self.health_checker.alive_urls:
+                    if url_data not in alive_urls_list[-batch_size:]:
+                        f.write(f"{url_data['url']} | Status: {url_data['status']} | Type: {url_data['content_type']} | Time: {url_data['timestamp']}\n")
             
-            # Terminale yaz
-            for url_data in alive[-batch_size:]:
-                print(Fore.GREEN + f"  ✅ {url_data['url']}")
-            
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
         
-        # İstatistikler
+        # Final istatistikler
         stats = self.health_checker.get_statistics()
-        print(Fore.CYAN + "\n" + "="*60)
+        print(Fore.CYAN + "\n" + "="*70)
         print(Fore.GREEN + f"📊 TARAMA İSTATİSTİKLERİ")
-        print(Fore.CYAN + "="*60)
+        print(Fore.CYAN + "="*70)
         print(Fore.WHITE + f"Toplam URL: {stats['total']}")
         print(Fore.GREEN + f"Canlı URL: {stats['alive']}")
         print(Fore.RED + f"Kapalı URL: {stats['dead']}")
-        print(Fore.WHITE + f"Başarı Oranı: {stats['alive']/(stats['total'])*100:.2f}%")
+        if stats['total'] > 0:
+            print(Fore.WHITE + f"Başarı Oranı: {(stats['alive']/stats['total'])*100:.2f}%")
     
     async def run(self):
         """Ana çalıştırma fonksiyonu"""
         self.start_time = datetime.now()
         
         print(Fore.CYAN + """
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║     🚀 FAST DORK RECON v2.0                                 ║
-║     Otomatik Kamera Tarama Aracı                            ║
-║     Sadece Eğitim ve Savunma Testi Amaçlıdır              ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║     🚀 FAST DORK RECON v2.0                                     ║
+║     Otomatik Kamera Tarama Aracı - TAM URL GÖSTERİMİ           ║
+║     Sadece Eğitim ve Savunma Testi Amaçlıdır                  ║
+║     CTRL+C ile güvenli sonlandırma ve kaydetme                 ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
         """)
+        
+        print(Fore.YELLOW + "⚠ NOT: CTRL+C basarsanız tüm veriler otomatik kaydedilecek!\n")
         
         # Çıktı dosyasını temizle
         with open(CONFIG["output_file"], 'w', encoding='utf-8') as f:
@@ -649,11 +669,14 @@ class FastDorkRecon:
             # Faz 1: Dork araması
             await self.run_dork_phase()
             
+            if not running:
+                return
+            
             # Faz 2: Canlılık kontrolü
             await self.run_health_check_phase()
             
         except KeyboardInterrupt:
-            print(Fore.YELLOW + "\n⚠ Kullanıcı tarafından durduruldu!")
+            print(Fore.YELLOW + "\n⚠ Kullanıcı tarafından durduruldu! (Ctrl+C)")
         except Exception as e:
             print(Fore.RED + f"\n❌ Hata: {e}")
             if CONFIG["debug"]:
@@ -665,22 +688,37 @@ class FastDorkRecon:
             
             # Özet rapor
             duration = (self.end_time - self.start_time).total_seconds()
-            print(Fore.CYAN + "\n" + "="*60)
+            stats = self.health_checker.get_statistics()
+            
+            print(Fore.CYAN + "\n" + "="*70)
             print(Fore.GREEN + "✅ TARAMA TAMAMLANDI")
-            print(Fore.CYAN + "="*60)
+            print(Fore.CYAN + "="*70)
             print(Fore.WHITE + f"⏱ Süre: {duration:.2f} saniye")
             print(Fore.GREEN + f"📁 Çıktı: {CONFIG['output_file']}")
             print(Fore.WHITE + f"📍 Toplam URL: {len(self.all_urls)}")
             print(Fore.GREEN + f"📷 Kamera URL: {len(self.camera_urls)}")
-            print(Fore.GREEN + f"✅ Canlı URL: {len(self.health_checker.alive_urls)}")
-            print(Fore.RED + f"❌ Kapalı URL: {len(self.health_checker.dead_urls)}")
+            print(Fore.GREEN + f"✅ Canlı URL: {stats['alive']}")
+            print(Fore.RED + f"❌ Kapalı URL: {stats['dead']}")
+            if stats['total'] > 0:
+                print(Fore.WHITE + f"📊 Başarı: {(stats['alive']/stats['total'])*100:.2f}%")
 
 # ============================================================
 # ANA FONKSİYON
 # ============================================================
 async def main():
-    bot = FastDorkRecon()
-    await bot.run()
+    global running
+    try:
+        bot = FastDorkRecon()
+        await bot.run()
+    except KeyboardInterrupt:
+        running = False
+        print(Fore.YELLOW + "\n⚠ Sonlandırılıyor... Veriler kaydediliyor...")
+        # Signal handler zaten çalışacak
+        await asyncio.sleep(1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n⚠ Program sonlandırıldı. Veriler kaydedildi.")
+        sys.exit(0)
