@@ -7,3 +7,6 @@ arka planda daha piyasaya sürmedigim şeyler yapıyorum ama bu GitHub serime ya
 yeşil gözüksün 
 
 neyse devamke guncelliom hala gözükmüyor 
+
+Gemini 3.8 den 3.7 ye geçirdim analiz işini ve 
+API ye gönderdiği system promt ve toplaması gereken veriyi daha detaylı promtlarla guncelliyorum
